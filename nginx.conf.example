@@ -1,0 +1,80 @@
+# ================================================
+# MsicFree — Nginx Configuration Template
+# ================================================
+# Copy ke: /etc/nginx/sites-available/msicfree
+# Symlink: ln -s /etc/nginx/sites-available/msicfree /etc/nginx/sites-enabled/
+# Test: nginx -t && systemctl reload nginx
+# ================================================
+
+server {
+    listen 80;
+    server_name _;  # Ganti dengan domain Cloudflare Tunnel jika sudah ada
+
+    root /var/www/msicfree;
+    index index.html;
+
+    # Logging
+    access_log /var/log/nginx/msicfree_access.log;
+    error_log  /var/log/nginx/msicfree_error.log;
+
+    # ===== SPA Fallback =====
+    # Semua route yang bukan file/folder → index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ===== PHP-FPM Handler =====
+    location ~ \.php$ {
+        fastcgi_pass unix:/run/php/php-fpm.sock;  # Sesuaikan versi PHP
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+
+        # Timeout untuk download-proxy.php (yt-dlp bisa lambat)
+        fastcgi_read_timeout 300s;
+        fastcgi_send_timeout 300s;
+    }
+
+    # ===== Server API =====
+    location /server-api/ {
+        # PHP handling sudah ditangani oleh location ~ \.php$ di atas
+        # Tapi kita tambahkan CORS headers
+        add_header Access-Control-Allow-Origin *;
+        add_header Access-Control-Allow-Methods "GET, POST, DELETE, OPTIONS";
+        add_header Access-Control-Allow-Headers "Content-Type, Authorization";
+
+        if ($request_method = OPTIONS) {
+            return 204;
+        }
+    }
+
+    # ===== Static Assets Caching =====
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff2|woff|ttf)$ {
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # ===== Security =====
+    # Sembunyikan file sensitif
+    location ~ /\. {
+        deny all;
+    }
+
+    location ~* (config\.php|\.env|\.git|setup\.sql) {
+        deny all;
+    }
+
+    # Block akses ke node_modules
+    location /node_modules/ {
+        deny all;
+    }
+
+    # Block akses ke api/ (Vercel legacy)
+    location /api/ {
+        deny all;
+    }
+
+    # ===== Upload/Request Limits =====
+    client_max_body_size 50M;
+    client_body_timeout 300s;
+}

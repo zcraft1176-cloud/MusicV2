@@ -1,0 +1,30 @@
+# Node
+node_modules/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# Screenshots (dev only)
+screenshot_*.png
+
+# Test files
+test_*.php
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Binary tools (download separately)
+yt-dlp.exe
+ffmpeg.exe
+
+# Server config (contains credentials)
+server-api/config.php
+.env
