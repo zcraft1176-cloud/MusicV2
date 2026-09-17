@@ -8,6 +8,60 @@
  *   Archive.org → Public domain music with direct audio
  */
 
+/**
+ * Scoring helpers for YouTube candidate selection.
+ *
+ * Deezer supplies the track list the user sees; this scoring only decides WHICH
+ * YouTube upload of that track gets played. It never filters search results —
+ * every Deezer track stays visible and playable, official or not.
+ *
+ * A wrong pick here is silent: the title on screen comes from Deezer, so the
+ * user reads "Dynamite" while hearing the EDM remix. Nothing downstream can
+ * detect that, so prefer the artist's own upload and push down the alternative
+ * versions the user did not ask for.
+ */
+
+// Title words carrying no signal — never penalise these as "extra".
+const TITLE_NOISE_WORDS = ['official', 'video', 'audio', 'music', 'lyric', 'lyrics',
+    'hd', 'remix', 'feat', 'ft'];
+
+// Alternative recordings. Penalised only when the user did not ask for one.
+const VERSION_WORDS = ['remix', 'cover', 'live', 'instrumental', 'karaoke', 'acoustic',
+    'slowed', 'sped', 'nightcore', 'mashup', 'reverb', '8d', 'remastered', 'extended'];
+
+const VERSION_PENALTY = 40;   // enough to outrank an equally-matching version
+const OFFICIAL_BONUS = 25;    // tie-breaker, not a relevance override
+
+/**
+ * Penalty for alternative versions the query did not request.
+ * "Dynamite" vs "Dynamite (EDM Remix)": same title, same duration, so both
+ * scored 150/148 and the remix won. This is what stops that.
+ */
+function versionPenalty(title, queryLower) {
+    let penalty = 0;
+    for (const w of VERSION_WORDS) {
+        if (new RegExp(`\\b${w}\\b`).test(title) && !new RegExp(`\\b${w}`).test(queryLower)) {
+            penalty += VERSION_PENALTY;
+        }
+    }
+    return penalty;
+}
+
+/**
+ * Is this upload from the artist's own channel?
+ * "- Topic" = distributor-managed artist channel, "VEVO" = label channel.
+ * Otherwise the uploader name is treated as the artist when it is a prefix of
+ * the query, since the query is built as "{artist} {title}".
+ */
+function isOfficialChannel(uploader, queryLower) {
+    if (uploader.includes(' - topic') || uploader.includes('vevo')) return true;
+    const clean = s => s.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const name = clean(uploader);
+    if (!name) return false;
+    const q = clean(queryLower);
+    return q === name || q.startsWith(name + ' ');
+}
+
 const MusicAPI = {
     config: {
         deezer: {
@@ -42,10 +96,18 @@ const MusicAPI = {
     cacheTimeout: 5 * 60 * 1000,
 
     /**
-     * Get proxy URL - always use PHP proxy
+     * Get proxy URL.
+     *
+     * XAMPP serves the PHP proxy; Vercel runs no PHP at all (it would serve
+     * proxy.php as source text), so the deployed build must use the serverless
+     * /api/proxy function instead. Detected by hostname so the same checkout
+     * works locally and on Vercel.
      */
     getProxyUrl(url) {
-        return `proxy.php?url=${encodeURIComponent(url)}`;
+        const isLocal = window.location.hostname === 'localhost'
+            || window.location.hostname === '127.0.0.1';
+        const proxyBase = isLocal ? 'proxy.php' : '/api/proxy';
+        return `${proxyBase}?url=${encodeURIComponent(url)}`;
     },
 
     setJamendoClientId(id) {
@@ -148,9 +210,9 @@ const MusicAPI = {
             { name: 'Country', id: 84 },
             { name: 'Indie', id: 85 },
             { name: 'Soul', id: 169 },
-            { name: 'Funk', id: 169 },
-            { name: 'Punk', id: 152 },
-            { name: 'Ambient', id: 106 },
+            { name: 'Funk', id: 169 },   // Deezer: 169 = "Soul & Funk" (satu genre)
+            { name: 'Punk', id: 152 },   // Deezer tak punya Punk → pakai Rock
+            { name: 'Ambient', id: 106 }, // Deezer tak punya Ambient → pakai Electro
             { name: 'Latin', id: 197 }
         ];
     },
@@ -278,91 +340,6 @@ const MusicAPI = {
         return null;
     },
 
-    /**
-     * Get a direct audio URL suitable for downloading
-     * Tries ALL Piped instances, then ALL Invidious instances
-     * Returns direct googlevideo.com URL for the audio stream
-     */
-    async getDirectAudioUrl(track) {
-        // Non-YouTube: already has direct URL
-        if (track.audioUrl && !track.audioUrl.startsWith('yt:')) {
-            return { url: track.audioUrl, format: 'mp3' };
-        }
-
-        if (!track.videoId) return null;
-
-        // Try ALL Piped instances for /streams/ endpoint
-        const pipedInstances = this.config.piped.instances;
-        for (const instance of pipedInstances) {
-            try {
-                console.log(`[Download] Trying Piped streams: ${instance}`);
-                const target = `${instance}/streams/${track.videoId}`;
-                const proxyUrl = this.getProxyUrl(target);
-                const ctrl = new AbortController();
-                const tm = setTimeout(() => ctrl.abort(), 12000);
-                const res = await fetch(proxyUrl, { signal: ctrl.signal });
-                clearTimeout(tm);
-                
-                if (!res.ok) continue;
-                const data = await res.json();
-                
-                if (data?.audioStreams?.length > 0) {
-                    const audioStreams = data.audioStreams
-                        .filter(s => s.mimeType && s.mimeType.includes('audio') && s.url)
-                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-                    if (audioStreams.length > 0) {
-                        const best = audioStreams[0];
-                        const format = best.mimeType.includes('webm') ? 'webm' 
-                                     : best.mimeType.includes('mp4') ? 'm4a' 
-                                     : 'mp3';
-                        console.log(`[Download] ✅ Got audio from Piped: ${format} ${best.bitrate}bps`);
-                        return { url: best.url, format, bitrate: best.bitrate, quality: best.quality };
-                    }
-                }
-            } catch (e) {
-                console.warn(`[Download] Piped ${instance} failed:`, e.message);
-            }
-        }
-
-        // Try ALL Invidious instances for audio stream
-        const invInstances = this.config.invidious.instances;
-        for (const instance of invInstances) {
-            try {
-                console.log(`[Download] Trying Invidious: ${instance}`);
-                const target = `${instance}/api/v1/videos/${track.videoId}`;
-                const proxyUrl = this.getProxyUrl(target);
-                const ctrl = new AbortController();
-                const tm = setTimeout(() => ctrl.abort(), 12000);
-                const res = await fetch(proxyUrl, { signal: ctrl.signal });
-                clearTimeout(tm);
-                
-                if (!res.ok) continue;
-                const data = await res.json();
-                
-                if (data?.adaptiveFormats?.length > 0) {
-                    const audioFormats = data.adaptiveFormats
-                        .filter(f => f.type && f.type.startsWith('audio/') && f.url)
-                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-                    if (audioFormats.length > 0) {
-                        const best = audioFormats[0];
-                        const format = best.type.includes('webm') ? 'webm'
-                                     : best.type.includes('mp4') ? 'm4a'
-                                     : 'mp3';
-                        console.log(`[Download] ✅ Got audio from Invidious: ${format} ${best.bitrate}bps`);
-                        return { url: best.url, format, bitrate: best.bitrate };
-                    }
-                }
-            } catch (e) {
-                console.warn(`[Download] Invidious ${instance} failed:`, e.message);
-            }
-        }
-
-        console.error('[Download] All instances failed to get audio stream');
-        return null;
-    },
-
     // =====================
     // DEEZER API (Metadata)
     // =====================
@@ -470,10 +447,15 @@ const MusicAPI = {
 
                     // Check if the result title contains key words from search query
                     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
-                    const matchedWords = queryWords.filter(w => 
-                        title.includes(w) || uploader.includes(w)
-                    );
-                    score += (matchedWords.length / queryWords.length) * 100;
+                    // Guard: an all-short query ("iu bb") leaves queryWords empty and
+                    // 0/0 is NaN, which makes the sort a no-op and hands the pick to
+                    // whatever order YouTube returned. Fall back to no keyword score.
+                    if (queryWords.length > 0) {
+                        const matchedWords = queryWords.filter(w =>
+                            title.includes(w) || uploader.includes(w)
+                        );
+                        score += (matchedWords.length / queryWords.length) * 100;
+                    }
 
                     // Duration match bonus (max 50 points)
                     if (expectedDuration > 0) {
@@ -483,10 +465,16 @@ const MusicAPI = {
 
                     // Penalize if title contains words NOT in the query (likely wrong song)
                     const titleWords = title.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3);
-                    const extraWords = titleWords.filter(w => 
-                        !queryLower.includes(w) && !['official', 'video', 'audio', 'music', 'lyric', 'lyrics', 'hd', 'remix'].includes(w)
+                    const extraWords = titleWords.filter(w =>
+                        !queryLower.includes(w) && !TITLE_NOISE_WORDS.includes(w)
                     );
                     score -= extraWords.length * 10;
+
+                    // Push down versions the user did not ask for (remix/cover/live/...)
+                    score -= versionPenalty(title, queryLower);
+
+                    // Prefer the artist's own channel when relevance is close
+                    if (isOfficialChannel(uploader, queryLower)) score += OFFICIAL_BONUS;
 
                     return { item, score };
                 });
@@ -553,22 +541,29 @@ const MusicAPI = {
 
                 if (candidates.length === 0) return null;
 
-                // Score candidates
+                // Score candidates (same weighting as piped.findVideoId)
                 const scored = candidates.map(item => {
                     const title = (item.title || '').toLowerCase();
                     const author = (item.author || '').toLowerCase();
                     let score = 0;
 
                     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
-                    const matchedWords = queryWords.filter(w =>
-                        title.includes(w) || author.includes(w)
-                    );
-                    score += (matchedWords.length / queryWords.length) * 100;
+                    // Guard against 0/0 = NaN on all-short queries (see piped.findVideoId)
+                    if (queryWords.length > 0) {
+                        const matchedWords = queryWords.filter(w =>
+                            title.includes(w) || author.includes(w)
+                        );
+                        score += (matchedWords.length / queryWords.length) * 100;
+                    }
 
                     if (expectedDuration > 0) {
                         const durationDiff = Math.abs(item.lengthSeconds - expectedDuration);
                         score += Math.max(0, 50 - durationDiff * 2);
                     }
+
+                    // Push down versions the user did not ask for, prefer artist's channel
+                    score -= versionPenalty(title, queryLower);
+                    if (isOfficialChannel(author, queryLower)) score += OFFICIAL_BONUS;
 
                     return { item, score };
                 });
