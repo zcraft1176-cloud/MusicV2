@@ -500,11 +500,11 @@ const PlaylistManager = {
             }
         }
 
-        // Backup: fire-and-forget to Firestore
+        // Backup: Firestore (primary store when server-api is unused)
         if (Auth.db) {
             try {
                 const uid = Auth.getUid();
-                Auth.db.collection('users').doc(uid)
+                await Auth.db.collection('users').doc(uid)
                     .collection('playlists').doc(playlist.id)
                     .set({
                         name: playlist.name,
@@ -513,7 +513,7 @@ const PlaylistManager = {
                         updatedAt: playlist.updatedAt
                     });
             } catch (e) {
-                // Silent fail — backup only
+                Auth.warnCloudFailure('playlist save', e);
             }
         }
     },
@@ -540,11 +540,11 @@ const PlaylistManager = {
         if (Auth.db) {
             try {
                 const uid = Auth.getUid();
-                Auth.db.collection('users').doc(uid)
+                await Auth.db.collection('users').doc(uid)
                     .collection('playlists').doc(id)
                     .delete();
             } catch (e) {
-                // Silent fail
+                Auth.warnCloudFailure('playlist delete', e);
             }
         }
     }

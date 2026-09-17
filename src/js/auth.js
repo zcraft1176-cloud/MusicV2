@@ -112,6 +112,21 @@ const Auth = {
     },
 
     /**
+     * Surface a Firestore write failure.
+     * Firestore promise rejections are otherwise invisible: the sync call sites
+     * below used a synchronous try/catch around a non-awaited .set(), which can
+     * never catch a rejected promise. Data stays in localStorage, so tell the
+     * user once rather than failing silently on every keystroke.
+     */
+    _cloudWarned: false,
+    warnCloudFailure(scope, e) {
+        console.error(`Firestore ${scope} failed:`, e?.code || e?.message || e);
+        if (this._cloudWarned) return;
+        this._cloudWarned = true;
+        UI.showToast('Cloud sync failed — changes kept on this device only', 'warning');
+    },
+
+    /**
      * Login with Google popup
      */
     async loginWithGoogle() {

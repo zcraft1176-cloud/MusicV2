@@ -359,15 +359,15 @@ const LikedSongs = {
             }
         }
 
-        // Backup: fire-and-forget to Firestore (optional)
+        // Backup: Firestore (also the primary store when server-api is unused)
         if (Auth.db) {
             try {
                 const uid = Auth.getUid();
-                Auth.db.collection('users').doc(uid)
+                await Auth.db.collection('users').doc(uid)
                     .collection('settings').doc('likedSongs')
                     .set({ songs: this.songs, updatedAt: new Date().toISOString() });
             } catch (e) {
-                // Silent fail — backup only
+                Auth.warnCloudFailure('liked songs save', e);
             }
         }
     },
