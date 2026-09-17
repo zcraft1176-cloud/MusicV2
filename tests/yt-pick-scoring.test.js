@@ -202,6 +202,43 @@ t('empty result set returns null instead of throwing', async () => {
   assert.strictEqual(await pick([], 'anything here', 200), null);
 });
 
+// Real case: Deezer "Not You" (Alan Walker) resolved to the YouTube upload
+// "Not You (Chinese Version)" — same artist channel, 1s different duration.
+t('REGRESSION: dubbed version loses to the original for "Alan Walker Not You"', async () => {
+  const items = [
+    stream('Not You (Chinese Version)', 'Alan Walker - Topic', 154, 1),
+    stream('Not You', 'Alan Walker - Topic', 154, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+});
+
+t('REGRESSION: a 1-second duration match cannot outrank the exact title', async () => {
+  const items = [
+    stream('Not You (Chinese Version)', 'Alan Walker - Topic', 153, 1),
+    stream('Not You', 'Alan Walker - Topic', 158, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+});
+
+t('language dubs are penalised (japanese/korean/spanish) but honoured when asked', async () => {
+  const items = [
+    stream('Not You (Japanese Version)', 'Alan Walker - Topic', 153, 1),
+    stream('Not You', 'Alan Walker - Topic', 153, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+  // ...and the dub is still reachable when the user actually asks for it
+  const dub = [stream('Not You (Japanese Version)', 'Alan Walker - Topic', 153, 1)];
+  assert.strictEqual(await pick(dub, 'Alan Walker Not You Japanese Version', 153), 'vid00000001');
+});
+
+t('"restrung performance" alt take loses to the studio original', async () => {
+  const items = [
+    stream('Not You (Restrung Performance)', 'Alan Walker - Topic', 179, 1),
+    stream('Not You', 'Alan Walker - Topic', 153, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+});
+
 Promise.all(pending).then(() => {
   console.log(`\n${pass} checks passed`);
 });

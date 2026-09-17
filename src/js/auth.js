@@ -135,8 +135,13 @@ const Auth = {
             await firebase.auth().signInWithPopup(provider);
             UI.showToast(`Welcome, ${this.user.displayName}!`, 'success');
         } catch (e) {
-            if (e.code !== 'auth/popup-closed-by-user') {
-                console.error('Login error:', e);
+            if (e.code === 'auth/popup-closed-by-user') return;
+            console.error('Login error:', e);
+            // Domain ini tidak terdaftar di Firebase > Authentication > Settings >
+            // Authorized domains. Tanpa itu login SELALU gagal, apa pun kodenya.
+            if (e.code && e.code.includes('requests-from-referer')) {
+                UI.showToast('Domain ini belum diizinkan di Firebase. Tambahkan ke Authorized domains.', 'error');
+            } else {
                 UI.showToast('Login failed. Please try again.', 'error');
             }
         }

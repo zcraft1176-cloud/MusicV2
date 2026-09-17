@@ -147,10 +147,20 @@ const Player = {
                     onStateChange: (e) => this._onYTState(e),
                     onError: (e) => {
                         console.error('YT error:', e.data);
-                        if (this._source === 'youtube') {
-                            UI.showToast('YouTube error — skipping', 'error');
-                            setTimeout(() => this.next(), 800);
+                        if (this._source !== 'youtube') return;
+                        // 101/150 = owner disabled embedding, 100 = removed/private.
+                        // The song itself is normally still on YouTube under a
+                        // different upload, so retry the SAME track with another
+                        // videoId. Skipping to next() here is what makes the user
+                        // hear a different song than the one they clicked.
+                        if (!this._altTried && this.currentTrack) {
+                            this._altTried = true;
+                            UI.showToast('Upload unavailable — looking for another…', 'info');
+                            this._loadAlternateUpload();
+                            return;
                         }
+                        UI.showToast('YouTube error — skipping', 'error');
+                        setTimeout(() => this.next(), 800);
                     }
                 }
             });
@@ -478,6 +488,42 @@ const Player = {
 
     // Track retry state
     _retrying: false,
+    // Set once per track: an embed-blocked upload has already been swapped for another
+    _altTried: false,
+    // Monotonic id — the last click wins, so a slow resolve cannot hijack playback
+    _playSeq: 0,
+
+    /**
+     * The chosen YouTube upload refused to play (embedding disabled, removed,
+     * region-locked). Find a different upload of the SAME track and play that.
+     * Falls back to next() only when no other upload exists.
+     */
+    async _loadAlternateUpload() {
+        const track = this.currentTrack;
+        if (!track) return;
+        const failed = track.videoId;
+        const seq = this._playSeq;
+
+        try {
+            const url = await MusicAPI.resolveAudioUrl(
+                Object.assign({}, track, { audioUrl: null, videoId: null }), failed);
+            if (seq !== this._playSeq) return;   // user clicked something else meanwhile
+            if (url) {
+                track.videoId = url.replace('yt:', '');
+                track.audioUrl = url;
+                this._stopAll();
+                this.ytPlayer.loadVideoById(track.videoId);
+                console.log(`Alternate upload for "${track.title}": ${track.videoId}`);
+                return;
+            }
+        } catch (e) {
+            console.warn('Alternate upload lookup failed:', e.message);
+        }
+
+        if (seq !== this._playSeq) return;
+        UI.showToast('No playable upload found — skipping', 'error');
+        setTimeout(() => this.next(), 800);
+    },
 
     /** Stop all audio sources */
     _stopAll() {

@@ -27,7 +27,14 @@ const TITLE_NOISE_WORDS = ['official', 'video', 'audio', 'music', 'lyric', 'lyri
 
 // Alternative recordings. Penalised only when the user did not ask for one.
 const VERSION_WORDS = ['remix', 'cover', 'live', 'instrumental', 'karaoke', 'acoustic',
-    'slowed', 'sped', 'nightcore', 'mashup', 'reverb', '8d', 'remastered', 'extended'];
+    'slowed', 'sped', 'nightcore', 'mashup', 'reverb', '8d', 'remastered', 'extended',
+    // Alt takes. "Not You (Restrung Performance)" is not the track the user clicked.
+    'version', 'restrung', 'performance', 'orchestral', 'reprise', 'demo',
+    // Dubbed recordings. "Not You" -> "Not You (Chinese Version)" is a different
+    // song to the listener's ears, so never let one win on channel/duration alone.
+    'chinese', 'japanese', 'korean', 'spanish', 'indonesian', 'english', 'thai',
+    'vietnamese', 'hindi', 'arabic', 'turkish', 'french', 'german', 'portuguese',
+    'russian', 'malay', 'tagalog', 'dutch', 'italian', 'polish'];
 
 const VERSION_PENALTY = 40;   // enough to outrank an equally-matching version
 const OFFICIAL_BONUS = 25;    // tie-breaker, not a relevance override
@@ -293,7 +300,7 @@ const MusicAPI = {
      * Step 2: Piped search without filter (broader) → YouTube IFrame
      * Step 3: Deezer 30s preview → HTML5 Audio
      */
-    async resolveAudioUrl(track) {
+    async resolveAudioUrl(track, exclude = null) {
         if (track.source !== 'deezer' && track.audioUrl) {
             return track.audioUrl;
         }
@@ -303,7 +310,7 @@ const MusicAPI = {
         // Step 1: YouTube via Piped (filtered — music_songs)
         console.log(`[Step 1] Piped filtered search: ${query}`);
         try {
-            const vid = await this.piped.findVideoId(query, track.duration, 'music_songs');
+            const vid = await this.piped.findVideoId(query, track.duration, 'music_songs', exclude);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -315,7 +322,7 @@ const MusicAPI = {
         // Step 2: YouTube via Piped (unfiltered — broader results)
         console.log(`[Step 2] Piped unfiltered search: ${query}`);
         try {
-            const vid = await this.piped.findVideoId(query, track.duration, null);
+            const vid = await this.piped.findVideoId(query, track.duration, null, exclude);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -327,7 +334,7 @@ const MusicAPI = {
         // Step 3: YouTube via Invidious (different API, different instances)
         console.log(`[Step 3] Invidious search: ${query}`);
         try {
-            const vid = await this.invidious.findVideoId(query, track.duration);
+            const vid = await this.invidious.findVideoId(query, track.duration, exclude);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -424,7 +431,7 @@ const MusicAPI = {
          * Find best matching YouTube video ID for a track
          * Uses title matching + duration proximity to avoid wrong songs
          */
-        async findVideoId(query, expectedDuration = 0, filter = 'music_songs') {
+        async findVideoId(query, expectedDuration = 0, filter = 'music_songs', exclude = null) {
             const queryLower = query.toLowerCase();
             const filterParam = filter ? `&filter=${filter}` : '';
 
@@ -436,6 +443,8 @@ const MusicAPI = {
 
                 let candidates = data.items
                     .filter(item => item.type === 'stream' && item.duration > 30 && item.duration < 600);
+                // On a retry, ignore the upload that already failed to play.
+                if (exclude) candidates = candidates.filter(item => this.extractVideoId(item.url) !== exclude);
 
                 if (candidates.length === 0) return null;
 
@@ -457,10 +466,12 @@ const MusicAPI = {
                         score += (matchedWords.length / queryWords.length) * 100;
                     }
 
-                    // Duration match bonus (max 50 points)
+                    // Duration match bonus — a weak tie-breaker (max 20 points).
+                    // At 50 it outranked title relevance: "Not You" (98) lost to
+                    // "Not You (Chinese Version)" (153) purely on a 1-second match.
                     if (expectedDuration > 0) {
                         const durationDiff = Math.abs(item.duration - expectedDuration);
-                        score += Math.max(0, 50 - durationDiff * 2);
+                        score += Math.max(0, 20 - durationDiff * 2);
                     }
 
                     // Penalize if title contains words NOT in the query (likely wrong song)
@@ -528,7 +539,7 @@ const MusicAPI = {
             return null;
         },
 
-        async findVideoId(query, expectedDuration = 0) {
+        async findVideoId(query, expectedDuration = 0, exclude = null) {
             try {
                 const data = await this.invidiousFetch(
                     `/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort_by=relevance`
@@ -538,6 +549,8 @@ const MusicAPI = {
                 const queryLower = query.toLowerCase();
                 let candidates = data
                     .filter(item => item.type === 'video' && item.lengthSeconds > 30 && item.lengthSeconds < 600);
+                // On a retry, ignore the upload that already failed to play.
+                if (exclude) candidates = candidates.filter(item => item.videoId !== exclude);
 
                 if (candidates.length === 0) return null;
 
@@ -558,7 +571,7 @@ const MusicAPI = {
 
                     if (expectedDuration > 0) {
                         const durationDiff = Math.abs(item.lengthSeconds - expectedDuration);
-                        score += Math.max(0, 50 - durationDiff * 2);
+                        score += Math.max(0, 20 - durationDiff * 2);
                     }
 
                     // Push down versions the user did not ask for, prefer artist's channel
