@@ -1,6 +1,9 @@
 # Node
 node_modules/
 
+# Vercel: api/proxy.js + vercel.json dipakai saat deploy (Vercel tidak
+# menjalankan PHP, jadi proxy.php tidak bisa dipakai di sana)
+
 # Firebase
 .firebase/
 firebase-debug.log
@@ -28,3 +31,6 @@ ffmpeg.exe
 # Server config (contains credentials)
 server-api/config.php
 .env
+
+.vercel
+.env*

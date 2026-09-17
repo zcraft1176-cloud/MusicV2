@@ -1,0 +1,39 @@
+# Guard for `vercel` CLI uploads.
+#
+# The repo root holds yt-dlp.exe (18 MB) + ffmpeg.exe (195 MB) for the local
+# download path, which is dead: Vercel runs no PHP and no binaries, so neither
+# file can execute there. Uploading them makes the deployment 213 MB and fails
+# the size limit. With this file the upload is ~600 KB.
+#
+# Git-tracked deploys are unaffected; this only trims CLI uploads.
+
+# binaries — cannot run serverless
+*.exe
+
+# Vercel installs its own copy during the build
+node_modules/
+
+# no PHP runtime on Vercel — proxy.php is replaced by api/proxy.js
+*.php
+server-api/
+
+# local-only server scaffolding (self-hosted migration, never deployed)
+setup.sql
+deploy.sh
+nginx.conf.example
+
+# Firestore config/rules ship via the firebase CLI, not Vercel
+firebase.json
+.firebaserc
+firestore.rules
+firestore.indexes.json
+
+# dev-only
+tests/
+.env
+.env.example
+
+# VCS
+.git/
+.gitignore
+.vercelignore
