@@ -55,10 +55,12 @@ function versionPenalty(title, queryLower) {
 }
 
 /**
- * Is this upload from the artist's own channel?
+ * Is this upload from one of the track's credited artists?
  * "- Topic" = distributor-managed artist channel, "VEVO" = label channel.
- * Otherwise the uploader name is treated as the artist when it is a prefix of
- * the query, since the query is built as "{artist} {title}".
+ * The query is "{artist} {title}", so an uploader whose name appears in the
+ * query is one of the credited artists. Without this, a collaboration credited
+ * to "Alan Walker, Emma Steinbakken" never marks Emma's channel as official,
+ * even though hers is where the actual track is published.
  */
 function isOfficialChannel(uploader, queryLower) {
     if (uploader.includes(' - topic') || uploader.includes('vevo')) return true;
@@ -66,7 +68,11 @@ function isOfficialChannel(uploader, queryLower) {
     const name = clean(uploader);
     if (!name) return false;
     const q = clean(queryLower);
-    return q === name || q.startsWith(name + ' ');
+    if (q === name || q.startsWith(name + ' ')) return true;
+    // Whole-phrase containment: "emma steinbakken" inside
+    // "alan walker emma steinbakken not you". Padding avoids partial-word hits
+    // (e.g. "vera" matching inside "vera dosal").
+    return ` ${q} `.includes(` ${name} `);
 }
 
 const MusicAPI = {
@@ -454,15 +460,19 @@ const MusicAPI = {
                     const uploader = (item.uploaderName || '').toLowerCase();
                     let score = 0;
 
-                    // Check if the result title contains key words from search query
+                    // Relevance = how well the TITLE matches the song.
+                    // The uploader name is deliberately NOT counted here: doing so
+                    // gave every upload on the artist's channel full marks for the
+                    // artist's own name. "Not You (Instrumental)" (Alan Walker
+                    // channel) scored 100 while containing no extra title words,
+                    // beating the real track on Emma Steinbakken's channel. Channel
+                    // identity is rewarded separately by OFFICIAL_BONUS below.
                     const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
                     // Guard: an all-short query ("iu bb") leaves queryWords empty and
                     // 0/0 is NaN, which makes the sort a no-op and hands the pick to
                     // whatever order YouTube returned. Fall back to no keyword score.
                     if (queryWords.length > 0) {
-                        const matchedWords = queryWords.filter(w =>
-                            title.includes(w) || uploader.includes(w)
-                        );
+                        const matchedWords = queryWords.filter(w => title.includes(w));
                         score += (matchedWords.length / queryWords.length) * 100;
                     }
 
@@ -564,7 +574,7 @@ const MusicAPI = {
                     // Guard against 0/0 = NaN on all-short queries (see piped.findVideoId)
                     if (queryWords.length > 0) {
                         const matchedWords = queryWords.filter(w =>
-                            title.includes(w) || author.includes(w)
+                            title.includes(w)
                         );
                         score += (matchedWords.length / queryWords.length) * 100;
                     }

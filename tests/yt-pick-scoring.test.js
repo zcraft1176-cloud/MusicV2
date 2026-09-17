@@ -239,6 +239,34 @@ t('"restrung performance" alt take loses to the studio original', async () => {
   assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
 });
 
+// Root cause: title relevance counted uploader-name matches too, so every
+// upload on the headliner's channel scored full marks for the artist's name.
+// "Not You (Instrumental)" (Alan Walker channel) beat the real track on
+// Emma Steinbakken's channel purely on that.
+t('REGRESSION: artist name in the channel does not count as a title match', async () => {
+  const items = [
+    stream('Not You (Instrumental)', 'Alan Walker', 154, 1),
+    stream('Not You', 'Emma Steinbakken', 154, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+});
+
+t('unknown album tracks on the artist channel no longer outrank the song', async () => {
+  const items = [
+    stream('Faded', 'Alan Walker', 213, 1),
+    stream('Not You', 'Emma Steinbakken', 154, 2),
+  ];
+  assert.strictEqual(await pick(items, 'Alan Walker Not You', 153), 'vid00000002');
+});
+
+t('isOfficialChannel: a featured artist named in the query counts as official', () => {
+  assert.strictEqual(isOfficialChannel('Emma Steinbakken', 'alan walker emma steinbakken not you'), true);
+  assert.strictEqual(isOfficialChannel('Vera Dosal', 'alan walker not you'), false);
+  // Partial-word hits must not count: "vera" inside "vera dosal" is a full name.
+  assert.strictEqual(isOfficialChannel('Vera', 'vera dosal not you'), true);
+  assert.strictEqual(isOfficialChannel('Ala', 'alan walker not you'), false);
+});
+
 Promise.all(pending).then(() => {
   console.log(`\n${pass} checks passed`);
 });
