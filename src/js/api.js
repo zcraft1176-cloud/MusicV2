@@ -64,7 +64,7 @@ function versionPenalty(title, queryLower) {
  */
 function isOfficialChannel(uploader, queryLower) {
     if (uploader.includes(' - topic') || uploader.includes('vevo')) return true;
-    const clean = s => s.replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const clean = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
     const name = clean(uploader);
     if (!name) return false;
     const q = clean(queryLower);
@@ -316,7 +316,7 @@ const MusicAPI = {
         // Step 1: YouTube via Piped (filtered — music_songs)
         console.log(`[Step 1] Piped filtered search: ${query}`);
         try {
-            const vid = await this.piped.findVideoId(query, track.duration, 'music_songs', exclude);
+            const vid = await this.piped.findVideoId(query, track.duration, 'music_songs', exclude, track.title);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -328,7 +328,7 @@ const MusicAPI = {
         // Step 2: YouTube via Piped (unfiltered — broader results)
         console.log(`[Step 2] Piped unfiltered search: ${query}`);
         try {
-            const vid = await this.piped.findVideoId(query, track.duration, null, exclude);
+            const vid = await this.piped.findVideoId(query, track.duration, null, exclude, track.title);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -340,7 +340,7 @@ const MusicAPI = {
         // Step 3: YouTube via Invidious (different API, different instances)
         console.log(`[Step 3] Invidious search: ${query}`);
         try {
-            const vid = await this.invidious.findVideoId(query, track.duration, exclude);
+            const vid = await this.invidious.findVideoId(query, track.duration, exclude, track.title);
             if (vid) {
                 track.videoId = vid;
                 track.audioUrl = `yt:${vid}`;
@@ -437,7 +437,7 @@ const MusicAPI = {
          * Find best matching YouTube video ID for a track
          * Uses title matching + duration proximity to avoid wrong songs
          */
-        async findVideoId(query, expectedDuration = 0, filter = 'music_songs', exclude = null) {
+        async findVideoId(query, expectedDuration = 0, filter = 'music_songs', exclude = null, wantedTitle = null) {
             const queryLower = query.toLowerCase();
             const filterParam = filter ? `&filter=${filter}` : '';
 
@@ -460,17 +460,19 @@ const MusicAPI = {
                     const uploader = (item.uploaderName || '').toLowerCase();
                     let score = 0;
 
-                    // Relevance = how well the TITLE matches the song.
-                    // The uploader name is deliberately NOT counted here: doing so
-                    // gave every upload on the artist's channel full marks for the
-                    // artist's own name. "Not You (Instrumental)" (Alan Walker
-                    // channel) scored 100 while containing no extra title words,
-                    // beating the real track on Emma Steinbakken's channel. Channel
-                    // identity is rewarded separately by OFFICIAL_BONUS below.
-                    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
-                    // Guard: an all-short query ("iu bb") leaves queryWords empty and
-                    // 0/0 is NaN, which makes the sort a no-op and hands the pick to
-                    // whatever order YouTube returned. Fall back to no keyword score.
+                    // Relevance = how well the TITLE matches the SONG the user
+                    // clicked, not the whole "{artist} {title}" query.
+                    // Scoring the whole query sent full marks to any upload whose
+                    // title is just the artist name: a video titled "Imagine
+                    // Dragons" on the "Believer - Topic" channel scored 100 for
+                    // "Imagine Dragons Believer" and beat the real "Believer".
+                    // Uploader name is excluded here too - channel identity is
+                    // rewarded separately by OFFICIAL_BONUS below.
+                    const target = (wantedTitle || queryLower).toLowerCase();
+                    const queryWords = target.split(/\s+/).filter(w => w.length > 2);
+                    // Guard: an all-short target ("iu bb") leaves queryWords empty
+                    // and 0/0 is NaN, which makes the sort a no-op and hands the
+                    // pick to whatever order YouTube returned.
                     if (queryWords.length > 0) {
                         const matchedWords = queryWords.filter(w => title.includes(w));
                         score += (matchedWords.length / queryWords.length) * 100;
@@ -549,7 +551,7 @@ const MusicAPI = {
             return null;
         },
 
-        async findVideoId(query, expectedDuration = 0, exclude = null) {
+        async findVideoId(query, expectedDuration = 0, exclude = null, wantedTitle = null) {
             try {
                 const data = await this.invidiousFetch(
                     `/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort_by=relevance`
@@ -570,12 +572,12 @@ const MusicAPI = {
                     const author = (item.author || '').toLowerCase();
                     let score = 0;
 
-                    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
-                    // Guard against 0/0 = NaN on all-short queries (see piped.findVideoId)
+                    // Score against the song title only (see piped.findVideoId).
+                    const target = (wantedTitle || queryLower).toLowerCase();
+                    const queryWords = target.split(/\s+/).filter(w => w.length > 2);
+                    // Guard against 0/0 = NaN on all-short queries
                     if (queryWords.length > 0) {
-                        const matchedWords = queryWords.filter(w =>
-                            title.includes(w)
-                        );
+                        const matchedWords = queryWords.filter(w => title.includes(w));
                         score += (matchedWords.length / queryWords.length) * 100;
                     }
 

@@ -46,9 +46,9 @@ const { versionPenalty, isOfficialChannel, MusicAPI } = vm.runInContext(
 );
 
 /** Stub piped search, then run the real findVideoId. */
-function pick(items, query, duration, filter = 'music_songs') {
+function pick(items, query, duration, filter = 'music_songs', exclude = null, wantedTitle = null) {
   MusicAPI.piped.pipedFetch = async () => ({ items });
-  return MusicAPI.piped.findVideoId(query, duration, filter);
+  return MusicAPI.piped.findVideoId(query, duration, filter, exclude, wantedTitle);
 }
 
 const vid = n => `https://www.youtube.com/watch?v=vid${String(n).padStart(8, '0')}`;
@@ -56,6 +56,7 @@ const stream = (title, uploaderName, duration, n) =>
   ({ type: 'stream', title, uploaderName, duration, url: vid(n) });
 
 let pass = 0;
+let fails = 0;
 const t = (name, fn) => {
   try {
     const r = fn();
@@ -65,13 +66,13 @@ const t = (name, fn) => {
         console.log(`  ok   ${name}`); pass++;
       }, e => {
         console.log(`  FAIL ${name}\n       ${e.message}`);
-        process.exitCode = 1;
+        fails++; process.exitCode = 1;
       }));
       return;
     }
     console.log(`  ok   ${name}`); pass++;
   } catch (e) {
-    console.log(`  FAIL ${name}\n       ${e.message}`); process.exitCode = 1;
+    console.log(`  FAIL ${name}\n       ${e.message}`); fails++; process.exitCode = 1;
   }
 };
 const pending = [];
@@ -267,6 +268,31 @@ t('isOfficialChannel: a featured artist named in the query counts as official', 
   assert.strictEqual(isOfficialChannel('Ala', 'alan walker not you'), false);
 });
 
+// A video titled only with the artist name (uploaded to a channel named after
+// the song) used to score full marks, because relevance was measured against
+// the whole "{artist} {title}" query string.
+t('REGRESSION: an upload titled with only the artist name does not win', async () => {
+  const items = [
+    stream('Imagine Dragons', 'Believer - Topic', 306, 1),
+    stream('Believer', 'Imagine Dragons', 205, 2),
+  ];
+  assert.strictEqual(
+    await pick(items, 'Imagine Dragons Believer', 205, 'music_songs', null, 'Believer'),
+    'vid00000002');
+});
+
+t('song title is what relevance is measured against, not the artist', async () => {
+  const items = [
+    stream('Thunder', 'Imagine Dragons', 188, 1),
+    stream('Believer', 'Imagine Dragons', 205, 2),
+  ];
+  assert.strictEqual(
+    await pick(items, 'Imagine Dragons Believer', 205, 'music_songs', null, 'Believer'),
+    'vid00000002');
+});
+
 Promise.all(pending).then(() => {
-  console.log(`\n${pass} checks passed`);
+  // Failures must be visible even when the tail of the log is all that is read.
+  console.log(`\n${pass} checks passed${fails ? `, ${fails} FAILED` : ''}`);
+  if (fails) process.exitCode = 1;
 });
