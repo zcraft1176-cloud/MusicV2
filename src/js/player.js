@@ -42,6 +42,12 @@ const Player = {
         this._ytInterval = null;
         this._source = 'html5'; // 'html5' or 'youtube'
 
+        // Local installs play through stream-audio.php (yt-dlp audio passthrough)
+        // instead of the IFrame: audio-only bandwidth, and no video decode. Off
+        // localhost there is no yt-dlp to shell out to, so the IFrame it is.
+        this._streamEnabled = typeof location !== 'undefined'
+            && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
         // Cache DOM elements
         this.elements = {
             playPauseBtn: document.getElementById('playPauseBtn'),
@@ -70,7 +76,6 @@ const Player = {
             playerCover: document.getElementById('playerCover'),
             playerBar: document.getElementById('playerBar'),
             qualityBadge: document.getElementById('qualityBadge'),
-            queueCount: document.getElementById('queueCount'),
             visualizerCanvas: document.getElementById('visualizerCanvas'),
             // Mobile mini-bar elements
             mobilePlayPauseBtn: document.getElementById('mobilePlayPauseBtn'),
@@ -233,8 +238,38 @@ const Player = {
         // Repeat
         this.elements.repeatBtn?.addEventListener('click', () => this.toggleRepeat());
 
-        // Progress bar click
-        this.elements.progressBar?.addEventListener('click', (e) => this.seek(e));
+        // Progress bar: click to seek, drag to scrub (mirrors volumeBar below)
+        const bar = this.elements.progressBar;
+        if (bar) {
+            const scrub = (ev) => this.seek(ev.touches ? ev.touches[0] : ev);
+
+            bar.addEventListener('mousedown', (e) => {
+                this._progressDragging = true;
+                scrub(e);
+                const onMove = (ev) => { if (this._progressDragging) scrub(ev); };
+                const onUp = () => {
+                    this._progressDragging = false;
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+
+            bar.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                this._progressDragging = true;
+                scrub(e);
+                const onMove = (ev) => { ev.preventDefault(); if (this._progressDragging) scrub(ev); };
+                const onEnd = () => {
+                    this._progressDragging = false;
+                    bar.removeEventListener('touchmove', onMove);
+                    bar.removeEventListener('touchend', onEnd);
+                };
+                bar.addEventListener('touchmove', onMove, { passive: false });
+                bar.addEventListener('touchend', onEnd);
+            }, { passive: false });
+        }
 
         // Volume bar drag & click
         this.elements.volumeBar?.addEventListener('mousedown', (e) => {
@@ -549,6 +584,7 @@ const Player = {
 
         this.currentTrack = track;
         this._retrying = false;
+        this._fellBackToIFrame = false;
         this.updateUI();
 
         // Save to play history
@@ -585,25 +621,28 @@ const Player = {
             this.elements.qualityBadge.title = 'Deezer 30s Preview — full version not available';
         }
 
-        // Route: YouTube IFrame or HTML5 Audio
-        if (track.audioUrl.startsWith('yt:') && track.videoId) {
-            this._source = 'youtube';
-
-            // Wait for YT API if not ready (max 5s)
-            if (!this.ytReady) {
-                for (let w = 0; w < 25 && !this.ytReady; w++) {
-                    await new Promise(r => setTimeout(r, 200));
-                }
-            }
-
-            if (this.ytReady && this.ytPlayer) {
-                this.ytPlayer.setVolume((this.isMuted ? 0 : this.volume) * 100);
-                this.ytPlayer.loadVideoById(track.videoId);
-                console.log(`YouTube playing: ${track.title} [${track.videoId}]`);
+        // Route: local audio stream proxy, YouTube IFrame, or HTML5 Audio
+        if (this._streamEnabled && track.videoId) {
+            // Local install: play the audio track through the proxy. Measured
+            // ~56% less bandwidth than the IFrame, which also pulls video the
+            // user never sees, and the proxy passes Range through so seeking
+            // behaves exactly as it does for a normal file.
+            this._source = 'html5';
+            this.audio.src = `stream-audio.php?videoId=${encodeURIComponent(track.videoId)}`;
+            this.audio.play().then(() => {
+                this.isPlaying = true;
+                this.updateUI();
                 UI.showToast(`Now playing: ${track.title}`, 'success');
-            } else {
-                UI.showToast('YouTube player not ready — try again', 'error');
-            }
+            }).catch(error => {
+                // AbortError is not a failure: it means a newer load (skip,
+                // stop, or a faster resolve) superseded this play() call. Only
+                // fall back for a real inability to start the stream.
+                if (error.name === 'AbortError') return;
+                console.warn('Stream proxy failed, using IFrame:', error);
+                this._playViaIFrame(track);
+            });
+        } else if (track.audioUrl.startsWith('yt:') && track.videoId) {
+            this._playViaIFrame(track);
         } else {
             // Direct URL (Jamendo, Archive, Deezer preview)
             this._source = 'html5';
@@ -620,6 +659,38 @@ const Player = {
         }
 
         this.preloadNext();
+    },
+
+    /**
+     * Play through the hidden YouTube IFrame player.
+     * Used on deployed hosts, and as the fallback when the local stream proxy
+     * cannot start. Pulls video the user never sees (~300k vs ~133k audio-only).
+     */
+    async _playViaIFrame(track) {
+        this._source = 'youtube';
+
+        // Drop the <audio> source so only one stream is live. A rejected
+        // play() (autoplay policy) otherwise leaves the proxy stream loading
+        // in the background while the IFrame plays, and seek() -- which routes
+        // on _source -- would move the IFrame instead of the audible element.
+        this.audio.pause();
+        this.audio.removeAttribute('src');
+        this.audio.load();
+
+        if (!this.ytReady) {
+            for (let w = 0; w < 25 && !this.ytReady; w++) {
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+
+        if (this.ytReady && this.ytPlayer) {
+            this.ytPlayer.setVolume((this.isMuted ? 0 : this.volume) * 100);
+            this.ytPlayer.loadVideoById(track.videoId);
+            console.log(`YouTube playing: ${track.title} [${track.videoId}]`);
+            UI.showToast(`Now playing: ${track.title}`, 'success');
+        } else {
+            UI.showToast('YouTube player not ready — try again', 'error');
+        }
     },
 
     /**
@@ -684,7 +755,6 @@ const Player = {
         }
 
         this.play(this.queue[this.currentIndex]);
-        UI.updateQueueUI();
     },
 
     /**
@@ -712,18 +782,6 @@ const Player = {
         }
 
         this.play(this.queue[this.currentIndex]);
-        UI.updateQueueUI();
-    },
-
-    /**
-     * Add track to queue
-     */
-    addToQueue(track) {
-        this.queue.push(track);
-        this.updateQueueCount();
-        UI.showToast(`Added to queue: ${track.title}`, 'success');
-        UI.updateQueueUI();
-        this.saveState();
     },
 
     /**
@@ -731,30 +789,6 @@ const Player = {
      */
     addMultipleToQueue(tracks) {
         this.queue = this.queue.concat(tracks);
-        this.updateQueueCount();
-        UI.showToast(`Added ${tracks.length} tracks to queue`, 'success');
-        UI.updateQueueUI();
-        this.saveState();
-    },
-
-    /**
-     * Remove track from queue by index
-     */
-    removeFromQueue(index) {
-        this.queue.splice(index, 1);
-        if (index < this.currentIndex) {
-            this.currentIndex--;
-        } else if (index === this.currentIndex) {
-            // If removing current track, skip to next
-            if (this.queue.length > 0) {
-                this.currentIndex = Math.min(this.currentIndex, this.queue.length - 1);
-                this.play(this.queue[this.currentIndex]);
-            } else {
-                this.stop();
-            }
-        }
-        this.updateQueueCount();
-        UI.updateQueueUI();
         this.saveState();
     },
 
@@ -765,8 +799,6 @@ const Player = {
         this.queue = [];
         this.currentIndex = -1;
         this.stop();
-        this.updateQueueCount();
-        UI.updateQueueUI();
         this.saveState();
     },
 
@@ -777,7 +809,6 @@ const Player = {
         if (index >= 0 && index < this.queue.length) {
             this.currentIndex = index;
             this.play(this.queue[index]);
-            UI.updateQueueUI();
         }
     },
 
@@ -929,6 +960,16 @@ const Player = {
     onError(e) {
         // Ignore HTML5 audio errors when YouTube is the active source
         if (this._source === 'youtube') return;
+
+        // A cached stream URL can expire mid-session. Hand the track to the
+        // IFrame rather than dropping it.
+        if (this._streamEnabled && this.currentTrack && this.currentTrack.videoId && !this._fellBackToIFrame) {
+            this._fellBackToIFrame = true;
+            console.warn('Stream proxy error, falling back to IFrame:', e);
+            this._playViaIFrame(this.currentTrack);
+            return;
+        }
+
         console.error('Audio error:', e);
         UI.showToast('Playback error - skipping track', 'error');
         setTimeout(() => this.next(), 1000);
@@ -1042,8 +1083,6 @@ const Player = {
             document.title = 'MsicFree - Free High Quality Music';
         }
 
-        // Update queue count
-        this.updateQueueCount();
 
         // Update like button state
         if (typeof LikedSongs !== 'undefined') {
@@ -1111,15 +1150,6 @@ const Player = {
     },
 
     /**
-     * Update queue count badge
-     */
-    updateQueueCount() {
-        if (this.elements.queueCount) {
-            this.elements.queueCount.textContent = this.queue.length;
-        }
-    },
-
-    /**
      * Preload next track for seamless playback
      */
     preloadNext() {
@@ -1174,7 +1204,6 @@ const Player = {
                 this.repeatMode = state.repeatMode || 'none';
                 
                 this.audio.volume = this.volume;
-                this.updateQueueCount();
                 this.updateVolumeUI();
 
                 // Restore shuffle/repeat UI
