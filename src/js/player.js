@@ -299,12 +299,19 @@ const Player = {
         this.elements.mobilePrevBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.prev(); });
         this.elements.mobileNextBtn?.addEventListener('click', (e) => { e.stopPropagation(); this.next(); });
 
-        // Mini-bar: tap track info area to expand player
-        const trackInfoArea = this.elements.playerBar?.querySelector('.w-56');
+        // Mini-bar: tap the track info to expand the player, or double-click it
+        // (desktop debug — the panel itself stays mobile-only). The box is
+        // .min-w-0; it used to be looked up as .w-56, which is actually the
+        // volume/control cluster, so the handler was bound to the wrong element
+        // and tapping the title did nothing while tapping the controls expanded.
+        const trackInfoArea = this.elements.playerBar?.querySelector('.min-w-0');
         trackInfoArea?.addEventListener('click', (e) => {
             if (window.innerWidth < 768 && !e.target.closest('button')) {
                 this.expandMobilePlayer();
             }
+        });
+        trackInfoArea?.addEventListener('dblclick', (e) => {
+            if (!e.target.closest('button')) this.expandMobilePlayer();
         });
 
         // Expanded mobile player controls
