@@ -25,6 +25,11 @@ const t = (name, fn) => {
 
 /** Load api.js with a chosen hostname and return getProxyUrl's output. */
 function proxyBaseFor(hostname) {
+  return loadApi(hostname).getProxyUrl('https://api.deezer.com/search?q=x');
+}
+
+/** Load api.js with a chosen hostname and return the MusicAPI object. */
+function loadApi(hostname) {
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     localStorage: { getItem: () => null, setItem() {} },
@@ -32,10 +37,15 @@ function proxyBaseFor(hostname) {
     AbortController, setTimeout, clearTimeout, URLSearchParams,
     encodeURIComponent, Promise, Math, Date, JSON,
     window: { location: { hostname } },
+    location: { hostname },
   };
   vm.createContext(sandbox);
-  const { MusicAPI } = vm.runInContext(`${code}\n;({ MusicAPI })`, sandbox, { filename: API_SRC });
-  return MusicAPI.getProxyUrl('https://api.deezer.com/search?q=x');
+  return vm.runInContext(`${code}\n;({ MusicAPI })`, sandbox, { filename: API_SRC }).MusicAPI;
+}
+
+/** Does this host count as a local install? */
+function localFor(hostname) {
+  return loadApi(hostname).isLocalHost();
 }
 
 console.log('proxy base by host');
@@ -59,6 +69,29 @@ t('the url parameter is encoded', () => {
   const got = proxyBaseFor('localhost');
   assert.ok(!got.includes('api.deezer.com/'), 'upstream URL must be encoded');
   assert.ok(got.includes(encodeURIComponent('https://api.deezer.com')));
+});
+
+console.log('\ncan this host shell out to yt-dlp?');
+
+t('localhost, 127.0.0.1 and private LAN ranges are local', () => {
+  for (const h of ['localhost', '127.0.0.1', '10.41.1.243', '192.168.1.5', '172.16.0.9', '172.31.255.1']) {
+    assert.ok(localFor(h), `${h} must count as local (the phone reaches the install there)`);
+  }
+});
+
+t('public hosts are not local', () => {
+  for (const h of ['msicfree.vercel.app', 'music-v2-mu.vercel.app', 'example.com',
+                   '172.15.0.1', '172.32.0.1', '11.0.0.1']) {
+    assert.ok(!localFor(h), `${h} must NOT count as local (no yt-dlp there)`);
+  }
+});
+
+t('player.js and api.js agree on what "local" means', () => {
+  const player = fs.readFileSync(path.join(ROOT, 'src', 'js', 'player.js'), 'utf8');
+  assert.ok(/MusicAPI\.isLocalHost\(\)/.test(player),
+    'player.js must ask MusicAPI.isLocalHost() rather than repeat the host test');
+  assert.ok(!/hostname === 'localhost'/.test(player),
+    'player.js has its own copy of the host test again — two copies will drift');
 });
 
 console.log('\nwhitelist consistency (3 files must agree)');

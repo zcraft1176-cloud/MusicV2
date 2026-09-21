@@ -123,6 +123,38 @@ const MusicAPI = {
         return `${proxyBase}?url=${encodeURIComponent(url)}`;
     },
 
+    /**
+     * Is this page served by a local install (which can shell out to yt-dlp)?
+     *
+     * A phone on the same wifi reaches that install by its private IP, so the
+     * LAN counts as local too. Single source of truth: player.js asks this to
+     * decide between the stream proxy and the IFrame, and the search fallback
+     * below uses it for the same reason.
+     */
+    isLocalHost() {
+        const h = (typeof location !== 'undefined' && location.hostname) || '';
+        return h === 'localhost' || h === '127.0.0.1'
+            || /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(h);
+    },
+
+    /**
+     * Search YouTube through the local yt-dlp instead of a public instance.
+     *
+     * Returns the same {items:[...]} shape Piped does, so the caller scores it
+     * with identical code and picks the same upload either way.
+     */
+    async localSearch(query, n = 5) {
+        if (!this.isLocalHost()) return null;
+        try {
+            const res = await fetch(`search-audio.php?q=${encodeURIComponent(query)}&n=${n}`);
+            if (!res.ok) return null;
+            return await res.json();
+        } catch (e) {
+            console.warn('Local search failed:', e.message);
+            return null;
+        }
+    },
+
     setJamendoClientId(id) {
         this.config.jamendo.clientId = id;
         localStorage.setItem('jamendoClientId', id);
@@ -442,9 +474,17 @@ const MusicAPI = {
             const filterParam = filter ? `&filter=${filter}` : '';
 
             try {
-                const data = await this.pipedFetch(
+                let data = await this.pipedFetch(
                     `/search?q=${encodeURIComponent(query)}${filterParam}`
                 );
+                // Every Piped/Invidious instance is down more often than not,
+                // which used to make the whole library unplayable. On a local
+                // install yt-dlp answers instead, in the same shape, so the
+                // scoring below stays the only thing that picks an upload.
+                const pipedItems = data?.items || [];
+                if (pipedItems.length === 0) {
+                    data = await this.localSearch(query);
+                }
                 if (!data?.items?.length) return null;
 
                 let candidates = data.items
