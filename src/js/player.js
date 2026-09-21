@@ -46,7 +46,10 @@ const Player = {
         // instead of the IFrame: audio-only bandwidth, and no video decode. Off
         // localhost there is no yt-dlp to shell out to, so the IFrame it is.
         this._streamEnabled = typeof location !== 'undefined'
-            && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+            && (location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+                // A phone on the same wifi reaches the local install by its private
+                // IP, so treat the LAN as local too.
+                || /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(location.hostname));
 
         // Cache DOM elements
         this.elements = {
