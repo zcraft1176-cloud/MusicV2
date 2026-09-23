@@ -73,16 +73,25 @@ t('the url parameter is encoded', () => {
 
 console.log('\ncan this host shell out to yt-dlp?');
 
-t('localhost, 127.0.0.1 and private LAN ranges are local', () => {
-  for (const h of ['localhost', '127.0.0.1', '10.41.1.243', '192.168.1.5', '172.16.0.9', '172.31.255.1']) {
+t('localhost, 127.0.0.1, private LAN ranges and the machine name are local', () => {
+  for (const h of ['localhost', '127.0.0.1', '10.41.0.220', '192.168.1.5', '172.16.0.9',
+                   '172.31.255.1', 'DESKTOP-DFKNNKG', 'my-pc']) {
     assert.ok(localFor(h), `${h} must count as local (the phone reaches the install there)`);
   }
 });
 
-t('public hosts are not local', () => {
+t('public hosts and bare numbers are not local', () => {
   for (const h of ['msicfree.vercel.app', 'music-v2-mu.vercel.app', 'example.com',
-                   '172.15.0.1', '172.32.0.1', '11.0.0.1']) {
+                   '172.15.0.1', '172.32.0.1', '11.0.0.1', 'localhost.com', '']) {
     assert.ok(!localFor(h), `${h} must NOT count as local (no yt-dlp there)`);
+  }
+});
+
+t('a local host asks Apache for proxy.php, not the serverless function', () => {
+  for (const h of ['localhost', '10.41.0.220', 'DESKTOP-DFKNNKG']) {
+    const got = proxyBaseFor(h);
+    assert.ok(got.startsWith('proxy.php?url='),
+      `${h} must use proxy.php (Apache serves PHP there), got: ${got}`);
   }
 });
 

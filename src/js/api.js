@@ -117,9 +117,11 @@ const MusicAPI = {
      * works locally and on Vercel.
      */
     getProxyUrl(url) {
-        const isLocal = window.location.hostname === 'localhost'
-            || window.location.hostname === '127.0.0.1';
-        const proxyBase = isLocal ? 'proxy.php' : '/api/proxy';
+        // Any local install serves proxy.php through Apache, and a phone on
+        // the same wifi reaches that install by its private IP or by the
+        // machine's own name. Asking for /api/proxy there hits the Vercel
+        // serverless function on an Apache host, where nothing answers.
+        const proxyBase = this.isLocalHost() ? 'proxy.php' : '/api/proxy';
         return `${proxyBase}?url=${encodeURIComponent(url)}`;
     },
 
@@ -134,7 +136,10 @@ const MusicAPI = {
     isLocalHost() {
         const h = (typeof location !== 'undefined' && location.hostname) || '';
         return h === 'localhost' || h === '127.0.0.1'
-            || /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(h);
+            || /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(h)
+            // The machine's own name ("DESKTOP-ABC123") has no dot and only
+            // resolves on this LAN, so it is a local install too.
+            || (h.length > 1 && !h.includes('.') && !/^\d+$/.test(h));
     },
 
     /**
