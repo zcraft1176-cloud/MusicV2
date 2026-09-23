@@ -27,6 +27,7 @@ desktop.ini
 # Binary tools (download separately)
 yt-dlp.exe
 ffmpeg.exe
+bin/
 
 # Server config (contains credentials)
 server-api/config.php

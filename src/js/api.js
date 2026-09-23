@@ -143,19 +143,30 @@ const MusicAPI = {
     },
 
     /**
-     * Search YouTube through the local yt-dlp instead of a public instance.
+     * Where the yt-dlp-backed search lives.
+     *
+     * Same two backends as getProxyUrl: Apache serves search-audio.php on a
+     * local install, and the /api/ytsearch function runs the same extractor on
+     * Vercel. Search needs no player API, so it is the one piece of the local
+     * path that does survive up there — do NOT gate this on isLocalHost().
+     */
+    searchAudioUrl() {
+        return this.isLocalHost() ? 'search-audio.php' : '/api/ytsearch';
+    },
+
+    /**
+     * Search YouTube through yt-dlp instead of a public instance.
      *
      * Returns the same {items:[...]} shape Piped does, so the caller scores it
      * with identical code and picks the same upload either way.
      */
-    async localSearch(query, n = 5) {
-        if (!this.isLocalHost()) return null;
+    async extractorSearch(query, n = 5) {
         try {
-            const res = await fetch(`search-audio.php?q=${encodeURIComponent(query)}&n=${n}`);
+            const res = await fetch(`${this.searchAudioUrl()}?q=${encodeURIComponent(query)}&n=${n}`);
             if (!res.ok) return null;
             return await res.json();
         } catch (e) {
-            console.warn('Local search failed:', e.message);
+            console.warn('yt-dlp search failed:', e.message);
             return null;
         }
     },
@@ -488,7 +499,7 @@ const MusicAPI = {
                 // scoring below stays the only thing that picks an upload.
                 const pipedItems = data?.items || [];
                 if (pipedItems.length === 0) {
-                    data = await this.localSearch(query);
+                    data = await this.extractorSearch(query);
                 }
                 if (!data?.items?.length) return null;
 

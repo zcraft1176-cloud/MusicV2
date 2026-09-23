@@ -103,6 +103,51 @@ t('player.js and api.js agree on what "local" means', () => {
     'player.js has its own copy of the host test again — two copies will drift');
 });
 
+console.log('\nwhich search backend does this host reach?');
+
+t('a local host asks Apache for search-audio.php', () => {
+  for (const h of ['localhost', '10.41.0.220', 'DESKTOP-DFKNNKG']) {
+    const got = loadApi(h).searchAudioUrl();
+    assert.strictEqual(got, 'search-audio.php',
+      `${h} must use the PHP search (Apache runs yt-dlp there), got: ${got}`);
+  }
+});
+
+t('a deployed host asks for the /api/ytsearch function, NOT nothing', () => {
+  for (const h of ['music-v2-mu.vercel.app', 'msicfree.vercel.app']) {
+    const got = loadApi(h).searchAudioUrl();
+    assert.strictEqual(got, '/api/ytsearch',
+      `${h} must use the bundled extractor — search works there even though resolve does not, got: ${got}`);
+  }
+});
+
+t('extractor search is not gated on isLocalHost()', () => {
+  const src = code.slice(code.indexOf('extractorSearch'), code.indexOf('setJamendoClientId'));
+  assert.ok(!/isLocalHost\(\)/.test(src),
+    'search must run on BOTH hosts; only the URL switches (resolve is what the IP blocks)');
+});
+
+console.log('\nthe extractor reply is Piped-shaped (one scorer for both sources)');
+
+t('api/ytsearch.js turns yt-dlp JSON lines into Piped items', () => {
+  const { parseItems } = require(path.join(ROOT, 'api', 'ytsearch.js'));
+  const items = parseItems([
+    JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'A Song', uploader: 'Some Channel', duration: 213 }),
+    JSON.stringify({ id: 'short', title: 'dropped — not id-shaped' }),
+    'not json at all',
+    '',
+  ].join('\n'));
+
+  assert.strictEqual(items.length, 1, 'malformed lines must be skipped, not thrown');
+  assert.deepStrictEqual(items[0], {
+    type: 'stream',
+    title: 'A Song',
+    uploaderName: 'Some Channel',
+    duration: 213,
+    url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  }, 'shape must match what findVideoId() reads off a real instance');
+});
+
 console.log('\nwhitelist consistency (3 files must agree)');
 
 const domainsIn = (text) => new Set([...text.matchAll(/'([a-z0-9.-]+\.[a-z]{2,})'/g)].map(m => m[1]));
