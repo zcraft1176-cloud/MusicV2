@@ -499,7 +499,11 @@ const MusicAPI = {
                 // scoring below stays the only thing that picks an upload.
                 const pipedItems = data?.items || [];
                 if (pipedItems.length === 0) {
-                    data = await this.extractorSearch(query);
+                    // MusicAPI., not this. — `this` here is the `piped` object,
+                    // so this.extractorSearch was undefined and every fallback
+                    // search threw "not a function". It has to be reachable from
+                    // inside the object it lives next to.
+                    data = await MusicAPI.extractorSearch(query);
                 }
                 if (!data?.items?.length) return null;
 

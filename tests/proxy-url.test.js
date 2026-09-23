@@ -127,6 +127,17 @@ t('extractor search is not gated on isLocalHost()', () => {
     'search must run on BOTH hosts; only the URL switches (resolve is what the IP blocks)');
 });
 
+t('the fallback calls MusicAPI.extractorSearch, not this.', () => {
+  // `this` inside the `piped` object is the object itself, so this.extractorSearch
+  // is undefined and the whole fallback throws "not a function" — silent, because
+  // findVideoId catches it and only console.warns. Grep the call site, not the name.
+  const at = code.indexOf('extractorSearch(query)');
+  assert.ok(at > -1, 'findVideoId must fall back to the extractor');
+  const before = code.slice(Math.max(0, at - 20), at);
+  assert.ok(/MusicAPI\.$/.test(before),
+    `fallback must be MusicAPI.extractorSearch(...), got: ...${before}extractorSearch(query)`);
+});
+
 console.log('\nthe extractor reply is Piped-shaped (one scorer for both sources)');
 
 t('api/ytsearch.js turns yt-dlp JSON lines into Piped items', () => {
