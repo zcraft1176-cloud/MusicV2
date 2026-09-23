@@ -75,6 +75,15 @@ sandbox.Search._genreState.allTracks = B;
 UI.currentView = 'genre';
 assert(UI.getCurrentTracks() === B, 'genre view must prefer Search._genreState.allTracks');
 
+// liked view reads LikedSongs, never the home list.
+// Regression: this arm was missing on Music2, so the Liked page silently
+// returned _viewTracks.home and played whatever was on the home page.
+const LIKED = [{ id: 'liked1' }, { id: 'liked2' }];
+sandbox.LikedSongs.songs = LIKED;
+UI._viewTracks.home = A;
+UI.currentView = 'liked';
+assert(UI.getCurrentTracks() === LIKED, 'liked view must read LikedSongs.songs, not the home list');
+
 // --- renderPlaylistsPage: array-of-objects, click passes the real playlist id ---
 // Regression: it used Object.keys(playlists), so card.dataset.playlist was the
 // array INDEX and viewPlaylist("0") matched no playlist -> cards were dead.

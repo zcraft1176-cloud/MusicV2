@@ -478,6 +478,11 @@ const UI = {
             case 'playlist':
                 const playlist = PlaylistManager.playlists.find(p => p.id === PlaylistManager.currentPlaylistId);
                 return playlist?.tracks || [];
+            // Music routes this view to LikedSongs; without the arm every click
+            // on a Liked card read _viewTracks.home and played the home page's
+            // tracks instead. Same class as ui-view-tracks.test.js guards.
+            case 'liked':
+                return typeof LikedSongs !== 'undefined' ? LikedSongs.songs : [];
             case 'home':
             default:
                 return this._viewTracks.home || [];
